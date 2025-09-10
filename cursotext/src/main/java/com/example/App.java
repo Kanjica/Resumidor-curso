@@ -1,5 +1,10 @@
 package com.example;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
 
@@ -12,26 +17,22 @@ import org.openqa.selenium.firefox.FirefoxProfile;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+
 public class App {
     public static void main( String[] args ) throws InterruptedException{
 
         FirefoxProfile profile = new FirefoxProfile();
 
-        // Definindo o User-Agent para imitar um navegador real
-        // Use um User-Agent atualizado, que você pode encontrar facilmente na internet
         profile.setPreference("general.useragent.override", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0");
-
-        // Desabilitando a detecção de automação "navigator.webdriver"
-        // O "dom.webdriver.enabled" é a flag que os sites verificam
         profile.setPreference("dom.webdriver.enabled", false);
-
-        // Desabilitando a flag "webdriver" para o JavaScript
         profile.setPreference("useAutomationExtension", false);
 
-        // Adicionando o perfil às opções do Firefox
         FirefoxOptions options = new FirefoxOptions();
         options.setProfile(profile);
-        //options.addArguments("--headless");
+        options.addArguments("--headless");
 
         FirefoxDriver driver = new FirefoxDriver(options);
         WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(15));
@@ -66,33 +67,71 @@ public class App {
 
         System.out.println("Texto: " + texto);
 
-        /* 
-        driver.navigate().to("https://chatgpt.com/");
-        Thread.sleep(1000);
+        System.out.println("Resumindo o texto com Hugging Face...");
+        try {
+            String resumo = resumirTexto(texto);
+            //String textoDeTeste = "O sol é uma estrela no centro do nosso sistema solar. A Terra gira ao redor do sol. O sol é muito importante para a vida no nosso planeta.";
+            //String resumo = resumirTexto(textoDeTeste);
+            System.out.println("Resumo: " + resumo);
 
-        WebElement promptDiv = wait.until(ExpectedConditions.presenceOfElementLocated(By.id("prompt-textarea")));
+        } catch (IOException e) {
+            e.printStackTrace();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        driver.quit();
+    }
 
-        WebElement paragraph = wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector("p.placeholder[data-placeholder='Ask anything']")));
+    public static String resumirTexto(String textoParaResumir) throws IOException, InterruptedException {
+        String apiKey = "Bearer hf_chave_do_pai";
 
-        String textToSend = "Olá, esse é o texto que eu quero enviar.";
+        HttpClient client = HttpClient.newHttpClient();
 
-        // Injeta o texto diretamente usando o JavaScript Executor
-        JavascriptExecutor js = (JavascriptExecutor) driver;
-        js.executeScript("arguments[0].textContent = arguments[1];", paragraph, textToSend);
-        
-        System.out.println("Texto injetado com sucesso!");
-        Thread.sleep(1000);
-        driver.findElement(By.id("composer-submit-button")).click();
-*/
-/* 
-        driver.navigate().to("https://www.editpad.org/tool/pt/text-summarizer");
+        String modelId = "facebook/bart-large-cnn"; 
 
-        WebElement textArea = wait.until(ExpectedConditions.presenceOfElementLocated(By.id("text")));
-        String textToSend = "Olá, esse é o texto que eu quero enviar.";
-        textArea.sendKeys(textToSend);
+        String textoLimpo = textoParaResumir
+                                .replace("\n", " ")
+                                .replaceAll("\\s+", " ")
+                                .trim();
 
-        driver.findElement(By.className("main-btn")).click();
-        */
-        //driver.quit();
+        String prompt = textoLimpo;
+
+        Gson gson = new Gson();
+        JsonObject requestJson = new JsonObject();
+        requestJson.addProperty("inputs", prompt);
+
+        JsonObject parameters = new JsonObject();
+        parameters.addProperty("max_length", 200); 
+        parameters.addProperty("min_length", 50);  
+        parameters.addProperty("do_sample", false); 
+        requestJson.add("parameters", parameters);
+
+        String jsonBody = gson.toJson(requestJson); 
+        System.out.println("JSON Body sendo enviado:\n" + jsonBody);
+
+        HttpRequest request = HttpRequest.newBuilder()
+                                .uri(URI.create("https://api-inference.huggingface.co/models/" + modelId))
+                                .header("Content-Type", "application/json")
+                                .header("Authorization", apiKey)
+                                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                                .build();
+
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        if (response.statusCode() == 200) {
+            String responseBody = response.body();
+
+            JsonArray jsonArray = gson.fromJson(responseBody, JsonArray.class);
+            JsonObject resultObject = jsonArray.get(0).getAsJsonObject();
+            String resumo = resultObject.get("summary_text").getAsString();
+
+            return resumo;
+        } else {
+            System.err.println("Erro na requisição: " + response.statusCode());
+            System.err.println("Corpo da resposta: " + response.body());
+            System.err.println("URL da API: " + "https://api-inference.huggingface.co/models/" + modelId);
+
+            return "Erro ao resumir o texto.";
+        }
     }
 }
